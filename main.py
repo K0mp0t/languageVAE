@@ -156,6 +156,32 @@ if __name__ == '__main__':
 
     ddp_model = DDP(model, device_ids=[DEVICE])
 
+    total_params = sum(p.numel() for p in ddp_model.parameters())
+    trainable_params = sum(
+        p.numel() for name, p in ddp_model.named_parameters()
+        if p.requires_grad
+    )
+    
+    muon_params = [p for n, p in ddp_model.named_parameters() if p.ndim == 2 and ('encoder_blocks' in n or 'decoder_blocks' in n)]
+    other_params = [p for n, p in ddp_model.named_parameters() if p.ndim != 2 or ('encoder_blocks' not in n and 'decoder_blocks' not in n)]
+
+    num_muon_params = sum(p.numel() for p in muon_params)
+    num_other_params = sum(p.numel() for p in other_params)
+
+    assert num_muon_params + num_other_params == total_params
+
+    target_tokens = 12 * total_params
+
+    if TOKENS_PER_STEP < 1:
+        target_batch_tokens = 2 ** 18 * (target_tokens / 1_321_210_944) ** 0.383
+        TOKENS_PER_STEP = target_batch_tokens
+
+    no_accumulation_batch_tokens = BATCH_SIZE * SEQ_LEN * world_size
+    GRADIENT_ACCUMULATION_STEPS = TOKENS_PER_STEP // no_accumulation_batch_tokens + (TOKENS_PER_STEP % no_accumulation_batch_tokens != 0)
+
+    if NUM_STEPS < 1:
+        NUM_STEPS = target_tokens // (TOKENS_PER_STEP) + 1
+
     if os.path.exists(DATASET_PATH):
         if any(fn.endswith('.parquet') for fn in os.listdir(DATASET_PATH)):
             train_loader = DDPStreamingParquetDataLoader(tokenizer, DATASET_PATH, SEQ_LEN, batch_size=BATCH_SIZE, 
@@ -194,9 +220,6 @@ if __name__ == '__main__':
         print(f'  lr0: {round(LR_0, 6)} -> {round(LR_0_SCALED, 6)}')
         print(f'  lrN: {round(LR_N, 6)} -> {round(LR_N_SCALED, 6)}')
     
-    muon_params = [p for n, p in ddp_model.named_parameters() if p.ndim == 2 and ('encoder_blocks' in n or 'decoder_blocks' in n)]
-    other_params = [p for n, p in ddp_model.named_parameters() if p.ndim != 2 or ('encoder_blocks' not in n and 'decoder_blocks' not in n)]
-    
     muon_optimizer = torch.optim.Muon(muon_params, lr=LR_0_SCALED, adjust_lr_fn='match_rms_adamw')
     other_optimizer = torch.optim.AdamW(other_params, lr=LR_0_SCALED)
 
@@ -224,29 +247,6 @@ if __name__ == '__main__':
         other_optimizer.load_state_dict(torch.load(os.path.join(resume_from_dir, 'other_optimizer.pth'), map_location='cpu'))
         other_lr_scheduler.load_state_dict(torch.load(os.path.join(resume_from_dir, 'other_lr_scheduler.pth'), map_location='cpu'))
 
-    total_params = sum(p.numel() for p in ddp_model.parameters())
-    trainable_params = sum(
-        p.numel() for name, p in ddp_model.named_parameters()
-        if p.requires_grad
-    )
-
-    num_muon_params = sum(p.numel() for p in muon_params)
-    num_other_params = sum(p.numel() for p in other_params)
-
-    assert num_muon_params + num_other_params == total_params
-
-    target_tokens = 12 * total_params
-
-    if TOKENS_PER_STEP < 1:
-        target_batch_tokens = 2 ** 18 * (target_tokens / 1_321_210_944) ** 0.383
-        TOKENS_PER_STEP = target_batch_tokens
-
-    no_accumulation_batch_tokens = BATCH_SIZE * SEQ_LEN * world_size
-    GRADIENT_ACCUMULATION_STEPS = TOKENS_PER_STEP // no_accumulation_batch_tokens + (TOKENS_PER_STEP % no_accumulation_batch_tokens != 0)
-
-    if NUM_STEPS < 1:
-        NUM_STEPS = target_tokens // (TOKENS_PER_STEP) + 1
-
     beta_scheduler = LinearCyclicBetaScheduler(NUM_STEPS, BETA_CYCLES, BETA_0, BETA_N)
 
     if rank == 0:
@@ -260,6 +260,14 @@ if __name__ == '__main__':
 
     if RESUME_FROM is None:
         assert not os.path.exists(EXP_OUTPUT_DIR)
+
+    if EXP_NAME == "dummy" or not rank == 0:
+        class _DummyWandb:
+            def log(self, *a, **kw): pass
+        wandb_run = _DummyWandb()
+    else:
+        import wandb
+        wandb_run = wandb.init(project="languageVAE", name=EXP_NAME, config=vars(args))
 
     train_rec_loss_history = list()
     train_kldiv_loss_history = list()
@@ -319,7 +327,7 @@ if __name__ == '__main__':
         train_kldiv_loss_history.append(global_kldiv_loss)
         train_grad_norm_history.append(global_grad_norm)
 
-        if rank == 0 and (step + 1) % TRAIN_LOGGING_FREQ == 0:
+        if rank == 0:
             smoothed_rec_loss = round(sum(train_rec_loss_history[-TRAIN_LOGGING_FREQ:]) / TRAIN_LOGGING_FREQ, 4)
             smoothed_kldiv_loss = round(sum(train_kldiv_loss_history[-TRAIN_LOGGING_FREQ:]) / TRAIN_LOGGING_FREQ, 4)
             max_grad_norm = round(max(train_grad_norm_history[-TRAIN_LOGGING_FREQ:]), 4)
@@ -328,7 +336,18 @@ if __name__ == '__main__':
             free, total = torch.cuda.mem_get_info(DEVICE)
             mem_used_MB = round((total - free) / 1024 ** 2)
 
-            print(f'{step+1}, elapsed time: {round(time.time() - start, 2)}s, rec loss: {smoothed_rec_loss}, kldiv loss: {smoothed_kldiv_loss}, grad_norm: {smoothed_grad_norm}, max grad norm: {max_grad_norm}, beta: {round(beta, 6)}, mem usage (MB): {mem_used_MB}, Muon lr: {muon_optimizer.param_groups[0]["lr"]}, AdamW lr: {other_optimizer.param_groups[0]["lr"]}')#, end=', ')
+            wandb_run.log({
+                "step": step+1, "elapsed time": time.time() - start, 
+                "train/rec_loss": smoothed_rec_loss, "train/rec_loss_raw": train_rec_loss_history[-1], 
+                "train/kldiv_loss": smoothed_kldiv_loss, "train/kldiv_loss_raw": train_kldiv_loss_history[-1],
+                "train/grad_norm": smoothed_grad_norm, "train/beta": beta,
+                "train/muon_lr": muon_optimizer.param_groups[0]["lr"], "train/adamw_lr": other_optimizer.param_groups[0]["lr"]
+            })
+
+            print("train/muon_lr", muon_optimizer.param_groups[0]["lr"], "train/adamw_lr", other_optimizer.param_groups[0]["lr"])
+
+            if (step + 1) % TRAIN_LOGGING_FREQ == 0:
+                print(f'{step+1}, elapsed time: {round(time.time() - start, 2)}s, rec loss: {smoothed_rec_loss}, kldiv loss: {smoothed_kldiv_loss}, grad_norm: {smoothed_grad_norm}, max grad norm: {max_grad_norm}, beta: {round(beta, 6)}, mem usage (MB): {mem_used_MB}, Muon lr: {muon_optimizer.param_groups[0]["lr"]}, AdamW lr: {other_optimizer.param_groups[0]["lr"]}')#, end=', ')
 
         if rank == 0 and (step + 1) % CHECKPOINTING_FREQ == 0:
             if RESUME_FROM is None:
@@ -378,6 +397,11 @@ if __name__ == '__main__':
             ddp_model.train()
 
             if rank == 0:
+                wandb_run.log({
+                    "step": step+1, "val/rec_loss": val_rec_loss, "val/kldiv_loss": val_kldiv_loss,
+                    "val/mu_q": mu_q, "val/logvar_q": logvar_q, "val/aup": val_aup
+                })
+
                 print(f'time: {round(total_time, 2)}s, val rec loss: {round(val_rec_loss, 6)}, val_kldiv_loss: {round(val_kldiv_loss, 6)}, val mu_q: {mu_q}, val logvar_q: {logvar_q}, val AUP: {val_aup}%')
 
     dist.barrier()     
