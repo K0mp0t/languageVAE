@@ -1,0 +1,2 @@
+from .configuration_custom_vae import CustomTextVAEConfig
+from .modeling_custom_vae import CustomTextVAEModel

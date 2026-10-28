@@ -1,0 +1,31 @@
+{
+    "act": "silu",
+    "architectures": [
+        "CustomTextVAEModel"
+    ],
+    "dropout": 0.0,
+    "dtype": "float32",
+    "init_cutoff_factor": 3,
+    "init_fn": "normal",
+    "init_std": 0.02,
+    "compression_config": [
+        [1, 1536, 768, "mlp", "mlp"],
+        [2, 768, 768, "mlp", "mlp"],
+        [1, 768, 384, "mlp", "mlp"],
+        [1, 384, 192, "mlp", "mlp"],
+        [1, 192, 96, "mlp", "mlp"],
+        [1, 96, 48, "mlp", "mlp"]
+    ],
+    "layer_norm_eps": 1e-06,
+    "layer_norm_type": "layer_norm",
+    "model_type": "custom_text_vae",
+    "num_heads": 8,
+    "patch_size": 1,
+    "rope_theta": 500000,
+    "scaling_factor": 1.0,
+    "shifting_factor": 0.0,
+    "transformers_version": "5.14.1",
+    "use_emb": true,
+    "use_variation": true,
+    "vocab_size": 100279
+}
