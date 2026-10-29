@@ -9,12 +9,12 @@
     "init_fn": "normal",
     "init_std": 0.02,
     "compression_config": [
-        [1, 1536, 768, "sum", "sum"],
-        [2, 768, 768, "sum", "sum"],
-        [1, 768, 384, "sum", "sum"],
-        [1, 384, 192, "sum", "sum"],
-        [1, 192, 96, "sum", "sum"],
-        [1, 96, 48, "sum", "sum"]
+        {"input_size": 1536, "output_size": 768, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 768, "output_size": 768, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 2, "merge_window_width": 2, "unmerge_window_width": 2},
+        {"input_size": 768, "output_size": 384, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 384, "output_size": 192, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 192, "output_size": 96, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 96, "output_size": 48, "merger_name": "sum", "unmerger_name": "sum", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1}
     ],
     "layer_norm_eps": 1e-06,
     "layer_norm_type": "layer_norm",

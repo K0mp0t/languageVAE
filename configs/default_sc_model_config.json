@@ -12,12 +12,12 @@
     "init_fn": "normal",
     "init_std": 0.02,
     "compression_config": [
-        [1, 1024, 1024, "linear", "linear"],
-        [2, 1024, 1024, "linear", "linear"],
-        [1, 1024, 1024, "linear", "linear"],
-        [2, 1024, 1024, "linear", "linear"],
-        [1, 1024, 1024, "linear", "linear"],
-        [2, 1024, 1024, "linear", "linear"]
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 2, "merge_window_width": 2, "unmerge_window_width": 2},
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 2, "merge_window_width": 2, "unmerge_window_width": 2},
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 1, "merge_window_width": 1, "unmerge_window_width": 1},
+        {"input_size": 1024, "output_size": 1024, "merger_name": "linear", "unmerger_name": "linear", "merge_ratio": 2, "merge_window_width": 2, "unmerge_window_width": 2}
     ],
     "layer_norm_eps": 1e-06,
     "layer_norm_type": "layer_norm",

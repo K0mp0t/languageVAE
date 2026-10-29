@@ -1,0 +1,31 @@
+{
+    "act": "silu",
+    "architectures": [
+        "CustomTextVAEModel"
+    ],
+    "dropout": 0.0,
+    "dtype": "float32",
+    "init_cutoff_factor": 3,
+    "init_fn": "normal",
+    "init_std": 0.02,
+    "compression_config": [
+        {"input_size": 1536, "output_size": 768, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 1, "merge_window_width": 1},
+        {"input_size": 768, "output_size": 768, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 2, "merge_window_width": 8},
+        {"input_size": 768, "output_size": 384, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 1, "merge_window_width": 1},
+        {"input_size": 384, "output_size": 192, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 1, "merge_window_width": 1},
+        {"input_size": 192, "output_size": 96, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 1, "merge_window_width": 1},
+        {"input_size": 96, "output_size": 48, "merger_name": "mlp", "unmerger_name": "mlp", "merge_ratio": 1, "merge_window_width": 1}
+    ],
+    "layer_norm_eps": 1e-06,
+    "layer_norm_type": "layer_norm",
+    "model_type": "custom_text_vae",
+    "num_heads": 8,
+    "patch_size": 1,
+    "rope_theta": 500000,
+    "scaling_factor": 1.0,
+    "shifting_factor": 0.0,
+    "transformers_version": "5.14.1",
+    "use_emb": true,
+    "use_variation": true,
+    "vocab_size": 100279
+}

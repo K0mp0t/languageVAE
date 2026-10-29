@@ -161,7 +161,7 @@ if __name__ == '__main__':
         p.numel() for name, p in ddp_model.named_parameters()
         if p.requires_grad
     )
-    
+
     muon_params = [p for n, p in ddp_model.named_parameters() if p.ndim == 2 and ('encoder_blocks' in n or 'decoder_blocks' in n)]
     other_params = [p for n, p in ddp_model.named_parameters() if p.ndim != 2 or ('encoder_blocks' not in n and 'decoder_blocks' not in n)]
 
@@ -343,8 +343,6 @@ if __name__ == '__main__':
                 "train/grad_norm": smoothed_grad_norm, "train/beta": beta,
                 "train/muon_lr": muon_optimizer.param_groups[0]["lr"], "train/adamw_lr": other_optimizer.param_groups[0]["lr"]
             })
-
-            print("train/muon_lr", muon_optimizer.param_groups[0]["lr"], "train/adamw_lr", other_optimizer.param_groups[0]["lr"])
 
             if (step + 1) % TRAIN_LOGGING_FREQ == 0:
                 print(f'{step+1}, elapsed time: {round(time.time() - start, 2)}s, rec loss: {smoothed_rec_loss}, kldiv loss: {smoothed_kldiv_loss}, grad_norm: {smoothed_grad_norm}, max grad norm: {max_grad_norm}, beta: {round(beta, 6)}, mem usage (MB): {mem_used_MB}, Muon lr: {muon_optimizer.param_groups[0]["lr"]}, AdamW lr: {other_optimizer.param_groups[0]["lr"]}')#, end=', ')

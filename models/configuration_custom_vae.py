@@ -2,6 +2,37 @@ from transformers import PretrainedConfig
 from typing import Type
 from torch import nn
 from .mergers import *
+from dataclasses import dataclass, asdict, is_dataclass
+
+
+def to_jsonable(value):
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            key: to_jsonable(val)
+            for key, val in asdict(value).items()
+        }
+
+    if isinstance(value, dict):
+        return {
+            key: to_jsonable(val)
+            for key, val in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(val) for val in value]
+
+    return value
+
+
+@dataclass
+class CompressionConfigItem:
+    input_size: int
+    output_size: int
+    merger_name: str
+    unmerger_name: str
+    merge_ratio: int
+    merge_window_width: int
+    unmerge_window_width: int
 
 
 class CustomTextVAEConfig(PretrainedConfig):
@@ -52,7 +83,8 @@ class CustomTextVAEConfig(PretrainedConfig):
     allowed_mergers = {
         'mlp': (MLPPatchMerger, MLPPatchUnMerger),
         'linear': (LinearPatchMerger, LinearPatchUnMerger),
-        'sum': (SumPatchMerger, SumPatchUnMerger)
+        'sum': (SumPatchMerger, SumPatchUnMerger),
+        'pr': (PerceiverResamplerMerger, None)
     }
 
     def __init__(
@@ -113,14 +145,23 @@ class CustomTextVAEConfig(PretrainedConfig):
                     input_size = self.dim // (2 ** (i // 2))
                     output_size = self.dim // (2 ** (i // 2))
 
-                self.compression_config.append([sequence_merge_ratio, input_size, output_size, 'mlp', 'mlp'])
+                self.compression_config.append(CompressionConfigItem(input_size, output_size, 'mlp', 'mlp', sequence_merge_ratio, sequence_merge_ratio, sequence_merge_ratio))
         else:
-            assert all(e[3] in self.allowed_mergers and e[4] in self.allowed_mergers for e in compression_config)
+            if isinstance(compression_config[0], dict):
+                compression_config = [CompressionConfigItem(**e) for e in compression_config]
+            assert all(e.merger_name in self.allowed_mergers and e.unmerger_name in self.allowed_mergers 
+                and e.merge_window_width % e.merge_ratio == 0 and e.unmerge_window_width % e.merge_ratio == 0 for e in compression_config)
             self.compression_config = compression_config
 
         if self.latent_dim is None:
-            self.latent_dim = self.compression_config[-1][2]
+            self.latent_dim = self.compression_config[-1].output_size
         else:
-            self.compression_config[-1][-1] = self.latent_dim
+            self.compression_config[-1].output_size = self.latent_dim
 
         super().__init__(**kwargs)
+
+
+    def to_dict(self):
+        output = super().to_dict()
+        output["compression_config"] = to_jsonable(self.compression_config)
+        return output
