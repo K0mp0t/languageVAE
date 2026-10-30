@@ -14,5 +14,5 @@ torchrun \
     --beta0 0.00001 \
     --beta-cycles 10 \
     --tokens-per-step 262144 \
-    --exp-name "mlp_merger"
+    --exp-name "mlp_merger84"
 
