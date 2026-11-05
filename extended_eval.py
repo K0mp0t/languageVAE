@@ -13,7 +13,6 @@ from datasets import load_dataset
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
-from tqdm.auto import tqdm
 
 from models import CustomTextVAEConfig, CustomTextVAEModel
 from distribution_evaluation import get_p_mus_and_logvars, get_q_mus_and_logvars
@@ -144,6 +143,30 @@ def calculate_aup_and_au_indices(mus, active_threshold=1e-2):
     return aup, au_indices, mu_stds
 
 
+def gather_rec_losses_and_accs(loader, model, eval_samples):
+    rec_losses = list()
+    rec_accs = list()
+
+    for x, src_key_padding_mask, x_unmasked in loader:
+        x = x.to(DEVICE)
+        src_key_padding_mask = src_key_padding_mask.to(DEVICE)
+        x_unmasked = x_unmasked.to(DEVICE)
+
+        with torch.no_grad():
+            x_rec, _, _ = model(x, src_key_padding_mask=src_key_padding_mask)
+
+        rec_losses.append(F.cross_entropy(x_rec.permute(0, 2, 1), x_unmasked, reduction='none').mean(-1))
+        rec_accs.append((x_rec.argmax(-1) == x_unmasked).to(torch.float32).mean(-1))
+
+        if len(rec_losses) * rec_losses[0].shape[0] >= eval_samples:
+            break
+
+    rec_losses = torch.cat(rec_losses).cpu().numpy()
+    rec_accs = torch.cat(rec_accs).cpu().numpy()
+    
+    return rec_losses, rec_accs
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -266,26 +289,232 @@ if __name__ == '__main__':
     fig.savefig(fig_output_path)
 
 
-    noise_schedule = torch.linspace(0, 0.5, 100)
-    train_l2_errors, train_ce_errors = calculate_error_vs_noise(train_loader, model, noise_schedule, EVAL_SAMPLES)
-    val_l2_errors, val_ce_errors = calculate_error_vs_noise(val_loader, model, noise_schedule, EVAL_SAMPLES)
+    # noise_schedule = torch.linspace(0, 0.5, 100)
+    # train_l2_errors, train_ce_errors = calculate_error_vs_noise(train_loader, model, noise_schedule, EVAL_SAMPLES)
+    # val_l2_errors, val_ce_errors = calculate_error_vs_noise(val_loader, model, noise_schedule, EVAL_SAMPLES)
 
-    fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(15, 6))
+    # fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(15, 6))
 
-    axes[0, 0].plot(noise_schedule, train_l2_errors)
-    axes[0, 1].plot(noise_schedule, val_l2_errors)
-    axes[0, 0].set_xlabel('noise level')
-    axes[0, 1].set_xlabel('noise level')
-    axes[0, 0].set_ylabel('L2 error level')
-    axes[0, 1].set_ylabel('L2 error level')
+    # axes[0, 0].plot(noise_schedule, train_l2_errors)
+    # axes[0, 1].plot(noise_schedule, val_l2_errors)
+    # axes[0, 0].set_xlabel('noise level')
+    # axes[0, 1].set_xlabel('noise level')
+    # axes[0, 0].set_ylabel('L2 error level')
+    # axes[0, 1].set_ylabel('L2 error level')
 
-    axes[1, 0].plot(noise_schedule, train_ce_errors)
-    axes[1, 1].plot(noise_schedule, val_ce_errors)
-    axes[1, 0].set_xlabel('noise level')
-    axes[1, 1].set_xlabel('noise level')
-    axes[1, 0].set_ylabel('CE level')
-    axes[1, 1].set_ylabel('CE level')
+    # axes[1, 0].plot(noise_schedule, train_ce_errors)
+    # axes[1, 1].plot(noise_schedule, val_ce_errors)
+    # axes[1, 0].set_xlabel('noise level')
+    # axes[1, 1].set_xlabel('noise level')
+    # axes[1, 0].set_ylabel('CE level')
+    # axes[1, 1].set_ylabel('CE level')
 
-    fig_output_path = os.path.join(OUTPUT_PATH, 'reconstruction_error_vs_noise_level.png')
-    print(f'Saving reconstruction error vs noise level plots to {fig_output_path}')   
+    # fig_output_path = os.path.join(OUTPUT_PATH, 'reconstruction_error_vs_noise_level.png')
+    # print(f'Saving reconstruction error vs noise level plots to {fig_output_path}')   
+    # fig.savefig(fig_output_path)
+
+
+    seq_len = 256
+
+    val_loader = DDPStreamingParquetDataLoader(tokenizer, DATASET_PATH, seq_len, batch_size=BATCH_SIZE, split='validation')
+
+    causal_mask = torch.ones((seq_len, seq_len)).tril().unsqueeze(0).expand(BATCH_SIZE, -1, -1).unsqueeze(1).to(DEVICE)
+
+    eval_samples = 1024
+
+    bidir_rec_losses = list()
+    causal_rec_losses = list()
+
+    bidir_rec_accs = list()
+    causal_rec_accs = list()
+
+    for x, src_key_padding_mask, x_unmasked in val_loader:
+        x = x.to(DEVICE)
+        src_key_padding_mask = src_key_padding_mask.to(DEVICE)
+        x_unmasked = x_unmasked.to(DEVICE)
+        
+        with torch.no_grad():
+            x_rec, _, _ = model(x, attention_mask=causal_mask)
+
+        causal_rec_losses.append(F.cross_entropy(x_rec.permute(0, 2, 1), x_unmasked, reduction='none').mean(-1))
+        causal_rec_accs.append((x_rec.argmax(-1) == x_unmasked).to(torch.float32).mean(-1))
+
+        with torch.no_grad():
+            x_rec, _, _ = model(x, src_key_padding_mask=src_key_padding_mask)
+
+        bidir_rec_losses.append(F.cross_entropy(x_rec.permute(0, 2, 1), x_unmasked, reduction='none').mean(-1))
+        bidir_rec_accs.append((x_rec.argmax(-1) == x_unmasked).to(torch.float32).mean(-1))
+        
+        if len(causal_rec_losses) * causal_rec_losses[0].shape[0] >= eval_samples:
+            break
+
+    causal_rec_losses = torch.cat(causal_rec_losses).cpu().numpy()
+    bidir_rec_losses = torch.cat(bidir_rec_losses).cpu().numpy()
+
+    causal_rec_accs = torch.cat(causal_rec_accs).cpu().numpy()
+    bidir_rec_accs = torch.cat(bidir_rec_accs).cpu().numpy()
+
+    print('                   | Causal mask | Bidirectional mask')
+    print('-------------------+-------------+-------------------')
+    print(f'Cross-entropy Mean |    {causal_rec_losses.mean().item():.6f} |           {bidir_rec_losses.mean().item():.6f}')
+    print(f'Cross-entropy Std  |    {causal_rec_losses.std().item():.6f} |           {bidir_rec_losses.std().item():.6f}')
+    print(f'Token acc Mean     |    {causal_rec_accs.mean().item():.6f} |           {bidir_rec_accs.mean().item():.6f}')
+    print(f'Binary acc Mean    |    {(causal_rec_accs == 1).mean().item():.6f} |           {(bidir_rec_accs == 1).mean().item():.6f}')
+
+    fig, axes = plt.subplots(figsize=(15, 7), nrows=2)
+
+    axes[0].boxplot([causal_rec_losses, bidir_rec_losses], orientation='horizontal')
+    axes[0].set_yticks(range(1, 3), ['causal CE', 'bidir CE'])
+
+    axes[1].boxplot([causal_rec_accs, bidir_rec_accs], orientation='horizontal')
+    axes[1].set_yticks(range(1, 3), ['causal acc', 'bidir acc'])
+
+    fig_output_path = os.path.join(OUTPUT_PATH, 'ce_and_acc_causal_vs_bidir.png')
+    print(f'Saving CE and acc boxplots for causal and bidirectional masks to {fig_output_path}')   
+    fig.savefig(fig_output_path)
+
+
+    seq_len = 256
+
+    val_loader = DDPStreamingParquetDataLoader(tokenizer, DATASET_PATH, seq_len, batch_size=BATCH_SIZE, split='validation')
+
+    eval_samples = 1024
+
+    padded_rec_losses = list()
+    rec_losses = list()
+
+    padded_rec_accs = list()
+    rec_accs = list()
+
+    for x, src_key_padding_mask, x_unmasked in val_loader:
+        x = x.to(DEVICE)
+        src_key_padding_mask = src_key_padding_mask.to(DEVICE)
+        x_unmasked = x_unmasked.to(DEVICE)
+
+        padding_tokens = torch.randint(1, 8, (x.shape[0],))
+        
+        x_padded = x.clone()
+        src_key_padding_mask_padded = src_key_padding_mask.clone()
+        for i, num_padding_tokens in enumerate(padding_tokens):
+            x_padded[i, :num_padding_tokens] = 100277
+            src_key_padding_mask_padded[i, :, :num_padding_tokens, :num_padding_tokens] = 1
+        
+        with torch.no_grad():
+            x_rec, _, _ = model(x_padded, src_key_padding_mask=src_key_padding_mask_padded)
+
+        padded_rec_loss = F.cross_entropy(x_rec.permute(0, 2, 1), x_unmasked, reduction='none')
+        padded_rec_acc = (x_rec.argmax(-1) == x_unmasked).to(torch.float32)
+
+        for i, num_padding_tokens in enumerate(padding_tokens):
+            padded_rec_losses.append(padded_rec_loss[i, num_padding_tokens:].mean())
+            padded_rec_accs.append(padded_rec_acc[i, num_padding_tokens:].mean())
+        
+        with torch.no_grad():
+            x_rec, _, _ = model(x, src_key_padding_mask=src_key_padding_mask)
+
+        rec_losses.append(F.cross_entropy(x_rec.permute(0, 2, 1), x_unmasked, reduction='none').mean(-1))
+        rec_accs.append((x_rec.argmax(-1) == x_unmasked).to(torch.float32).mean(-1))
+        
+        if len(rec_losses) * rec_losses[0].shape[0] >= eval_samples:
+            break
+
+    padded_rec_losses = torch.as_tensor(padded_rec_losses).cpu().numpy()
+    rec_losses = torch.cat(rec_losses).cpu().numpy()
+
+    padded_rec_accs = torch.as_tensor(padded_rec_accs).cpu().numpy()
+    rec_accs = torch.cat(rec_accs).cpu().numpy()
+
+    print('                   | Prefix-padded seq | Regular seq')
+    print('-------------------+-------------------+------------')
+    print(f'Cross-entropy Mean |          {padded_rec_losses.mean().item():.6f} |    {rec_losses.mean().item():.6f}')
+    print(f'Cross-entropy Std  |          {padded_rec_losses.std().item():.6f} |    {rec_losses.std().item():.6f}')
+    print(f'Token acc Mean     |          {padded_rec_accs.mean().item():.6f} |    {rec_accs.mean().item():.6f}')
+    print(f'Binary acc Mean    |          {(padded_rec_accs == 1).mean().item():.6f} |    {(rec_accs == 1).mean().item():.6f}')
+
+    fig, axes = plt.subplots(figsize=(15, 7), nrows=2)
+
+    axes[0].boxplot([padded_rec_losses, rec_losses], orientation='horizontal')
+    axes[0].set_yticks(range(1, 3), ['padded CE', 'regular CE'])
+
+    axes[1].boxplot([padded_rec_accs, rec_accs], orientation='horizontal')
+    axes[1].set_yticks(range(1, 3), ['padded acc', 'regular acc'])
+
+    fig_output_path = os.path.join(OUTPUT_PATH, 'ce_and_acc_prefix_padding.png')
+    print(f'Saving CE and acc boxplots for prefix-padded sequences to {fig_output_path}')   
+    fig.savefig(fig_output_path)
+
+
+    rec_losses = list()
+    rec_accs = list()
+    seq_lens = [64, 128, 256, 512, 1024, 2048]
+
+    for seq_len in seq_lens:
+        val_loader = DDPStreamingParquetDataLoader(tokenizer, DATASET_PATH, seq_len, batch_size=BATCH_SIZE, split='validation')
+        rl, ra = gather_rec_losses_and_accs(val_loader, model, 1024)
+        rec_losses.append(rl)
+        rec_accs.append(ra)
+        
+        del val_loader
+
+    headers = ['seq_len='+str(e) for e in seq_lens]
+
+    print('                   |', ' | '.join(headers))
+    print('-------------------+' + '+'.join('-' * (len(header) + 2) for header in headers))
+    print('Cross-entropy Mean |', ' | '.join(' ' * (len(header) - 8) + f'{e.mean().item():.6f}' for e, header in zip(rec_losses, headers)))
+    print('Cross-entropy Std  |', ' | '.join(' ' * (len(header) - 8) + f'{e.std().item():.6f}' for e, header in zip(rec_losses, headers)))
+    print('Token acc Mean     |', ' | '.join(' ' * (len(header) - 8) + f'{e.mean().item():.6f}' for e, header in zip(rec_accs, headers)))
+    print('Binary acc         |', ' | '.join(' ' * (len(header) - 8) + f'{(e == 1).mean().item():.6f}' for e, header in zip(rec_accs, headers)))
+
+    fig = plt.figure(figsize=(25, 8))
+    gs = fig.add_gridspec(4, 4, wspace=0.2, hspace=0.5)
+
+    ax0 = fig.add_subplot(gs[0, :2])
+    ax1 = fig.add_subplot(gs[1:, :2])
+    ax2 = fig.add_subplot(gs[:, 2:])
+
+    ax0.plot(range(len(seq_lens)), list(map(lambda x: x.mean(), rec_losses)), marker='o', label='mean')
+    ax0.plot(range(len(seq_lens)), list(map(lambda x: np.median(x), rec_losses)), marker='o', label='median')
+    ax0.legend()
+    ax0.set_xticks(range(len(seq_lens)), seq_lens)
+    ax0.set_title('Mean & median reconstruction loss vs sequence length')
+
+    ax1.boxplot(rec_losses, tick_labels=seq_lens)
+    ax1.set_ylim(-0.025, 0.25)
+    ax1.set_title('Reconstruction loss vs sequence length')
+
+    ax2.hist(rec_losses[2], alpha=0.4, label='seq_len=256', density=True, range=(0, 0.15))
+    ax2.hist(rec_losses[3], alpha=0.4, label='seq_len=512', density=True, range=(0, 0.15))
+    ax2.hist(rec_losses[4], alpha=0.4, label='seq_len=1024', density=True, range=(0, 0.15))
+    ax2.legend()
+    ax2.set_title('Distributions for some seqlens')
+
+    fig_output_path = os.path.join(OUTPUT_PATH, 'ce_different_seqlens.png')
+    print(f'Saving CE stats for sequences of different length to {fig_output_path}')   
+    fig.savefig(fig_output_path)
+
+    fig = plt.figure(figsize=(25, 8))
+    gs = fig.add_gridspec(4, 4, wspace=0.2, hspace=0.5)
+
+    ax0 = fig.add_subplot(gs[0, :2])
+    ax1 = fig.add_subplot(gs[1:, :2])
+    ax2 = fig.add_subplot(gs[:, 2:])
+
+    ax0.plot(range(len(seq_lens)), list(map(lambda x: x.mean(), rec_accs)), marker='o', label='mean')
+    ax0.plot(range(len(seq_lens)), list(map(lambda x: np.median(x), rec_accs)), marker='o', label='median')
+    ax0.legend()
+    ax0.set_xticks(range(len(seq_lens)), seq_lens)
+    ax0.set_title('Mean & median reconstruction acc vs sequence length')
+
+    ax1.boxplot(rec_accs, tick_labels=seq_lens)
+    ax1.set_ylim(0.8, 1.02)
+    ax1.set_title('Reconstruction acc vs sequence length')
+
+    ax2.hist(rec_accs[2], alpha=0.4, label='seq_len=256', density=True, range=(0.95, 1))
+    ax2.hist(rec_accs[3], alpha=0.4, label='seq_len=512', density=True, range=(0.95, 1))
+    ax2.hist(rec_accs[4], alpha=0.4, label='seq_len=1024', density=True, range=(0.95, 1))
+    ax2.legend()
+    ax2.set_title('Distributions for some seqlens')
+
+    fig_output_path = os.path.join(OUTPUT_PATH, 'acc_different_seqlens.png')
+    print(f'Saving acc stats for sequences of different length to {fig_output_path}')   
     fig.savefig(fig_output_path)
